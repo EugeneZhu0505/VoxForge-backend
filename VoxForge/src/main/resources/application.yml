@@ -1,0 +1,97 @@
+
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: voxforge
+  r2dbc:
+    url: r2dbc:postgresql://localhost:5432/voxforge
+    username: postgres
+    password: 12345678
+    pool:
+      initial-size: 10
+      max-size: 20
+      max-idle-time: 30m
+      validation-query: SELECT 1
+  security:
+    user:
+      name: admin
+      password: admin123
+      roles: ADMIN
+
+# WebFlux 线程池优化
+reactor:
+  netty:
+    ioWorkerCount: 4
+    pool:
+      maxConnections: 500
+      maxIdleTime: 45s
+      maxLifeTime: 60s
+
+# 外部 API 配置
+external:
+  # ASR 服务配置 - 七牛云语音识别
+  asr:
+    api-url: https://openai.qiniu.com/v1
+    api-key: sk-1fd9aaf7405b4e9d542457cb6b5431dc2dfccb23ab872ba9d3e7ebb2a7b0b686
+    timeout: 30s
+    model: asr
+
+  # TTS 服务配置 - 七牛云语音合成
+  tts:
+    api-url: https://openai.qiniu.com/v1
+    api-key: sk-1fd9aaf7405b4e9d542457cb6b5431dc2dfccb23ab872ba9d3e7ebb2a7b0b686
+    timeout: 30s
+    voice-type: qiniu_zh_female_wwxkjx
+    encoding: mp3
+    speed-ratio: 1.0
+
+  # LLM 服务配置 - 七牛云AI大模型推理
+  llm:
+    api-url: https://openai.qiniu.com/v1
+    api-key: sk-1fd9aaf7405b4e9d542457cb6b5431dc2dfccb23ab872ba9d3e7ebb2a7b0b686
+    # gemini-2.5-flash-lite, doubao-seed-1.6-flash, openai/gpt-5, deepseek-r3-search
+    model: gemini-2.5-flash-lite
+    timeout: 120s
+
+# JWT 配置
+jwt:
+  secret: voxforge-jwt-secret-key-2024-secure-256bit-compliant
+  expiration: 86400 # 24小时（秒）
+
+# WebClient 配置
+webclient:
+  connect-timeout: 10s  # 减少连接超时时间
+  read-timeout: 60s     # 减少读取超时时间
+  write-timeout: 30s    # 减少写入超时时间
+  max-memory-size: 10MB
+
+# OSS 配置 - 七牛云对象存储
+oss:
+  file-prefix: voxforge
+  # 七牛云存储配置
+  qiniu:
+    access-key: L16boMfLHL7lkh15huJ5MDc08vydJ0s5oj35xG_x
+    secret-key: jrNAFPTjDGHu4dpf8aaq1ZdKHZGaXKWki7U9eqrb
+    bucket: voxforge
+    domain: t4ouhfb5o.hd-bkt.clouddn.com
+    region: huadong
+
+logging:
+  level:
+    com.hzau.voxforge: debug
+    reactor.netty: info
+    org.springframework.r2dbc: debug
+    io.r2dbc.postgresql: debug
+    org.springframework.security: debug
+
+# Swagger/OpenAPI 配置
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+  show-actuator: false
+  use-management-port: false
