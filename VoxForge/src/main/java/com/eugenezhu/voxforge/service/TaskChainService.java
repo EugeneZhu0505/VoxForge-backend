@@ -34,7 +34,6 @@ public class TaskChainService {
     private final SessionRepository sessionRepository;
     private final TaskChainRepository taskChainRepository;
     private final TaskItemRepository taskItemRepository;
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * 调用 llm 解析用户输入, 获得输出, 生成任务链
