@@ -7,7 +7,7 @@ spring:
   application:
     name: voxforge
   r2dbc:
-    url: r2dbc:postgresql://localhost:5432/voxforge
+    url: r2dbc:postgresql://122.205.72.64:5432/voxforge
     username: postgres
     password: 12345678
     pool:
