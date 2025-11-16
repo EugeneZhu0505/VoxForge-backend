@@ -3,6 +3,9 @@ package com.eugenezhu.voxforge.service;
 import com.eugenezhu.voxforge.config.AsrTtsConfig;
 import com.eugenezhu.voxforge.model.AsrRequest;
 import com.eugenezhu.voxforge.model.AsrResponse;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.retry.Retry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -11,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
-import reactor.util.retry.Retry;
 
 import java.time.Duration;
 
@@ -30,6 +32,13 @@ public class AsrService {
     @Qualifier("asrWebClient") // 注入asrWebClient
     private final WebClient asrWebClient;
     private final AsrTtsConfig.AsrProperties asrProperties;
+
+    @Qualifier("asrCircuitBreaker") // 注入asrCircuitBreaker
+    private final CircuitBreaker asrCircuitBreaker;
+    @Qualifier("asrRetry") // 注入asrRetry
+    private final Retry asrRetry;
+    @Qualifier("asrBulkHead") // 注入asrBulkhead
+    private final Bulkhead asrBulkHead;
 
     /**
      * 调用qiniu asr api, 将语音流转换为文本流
