@@ -3,6 +3,9 @@ package com.eugenezhu.voxforge.service;
 import com.eugenezhu.voxforge.config.AsrTtsConfig;
 import com.eugenezhu.voxforge.model.TtsRequest;
 import com.eugenezhu.voxforge.model.TtsResponse;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.ratelimiter.RateLimiter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -14,6 +17,7 @@ import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @projectName: VoxForge
@@ -33,6 +37,17 @@ public class TtsService {
     // 注入 OSS 服务用于上传音频文件（暂时模拟）
     private final OssService ossService;
 
+    @Qualifier("ttsCircuitBreaker")
+    private final CircuitBreaker ttsCircuitBreaker;
+
+    @Qualifier("ttsBulkHead")
+    private final Bulkhead ttsBulkhead;
+
+    @Qualifier("ttsRateLimiter")
+    private final RateLimiter ttsRateLimiter;
+
+    private final ResilienceTuner resilienceTuner;
+
     public Mono<String> textToSpeech(String text, String voiceType, Float speedRatio) {
         log.info("开始文本转语音，文本：{}，语音类型：{}，语速：{}", text, voiceType, speedRatio);
 
@@ -40,6 +55,26 @@ public class TtsService {
         
         // 添加调试日志，打印实际发送的JSON
         log.debug("发送TTS请求体：{}", request);
+
+        // 限流
+        long startTime = System.nanoTime();
+
+        if (!ttsCircuitBreaker.tryAcquirePermission()) {
+            resilienceTuner.recordRejection("tts");
+            return Mono.error(new RuntimeException("TTS服务繁忙，请稍后重试"));
+        }
+
+        if (!ttsBulkhead.tryAcquirePermission()) {
+            resilienceTuner.recordRejection("tts");
+            return Mono.error(new RuntimeException("TTS服务繁忙，请稍后重试"));
+        }
+
+        if (!ttsRateLimiter.acquirePermission()) {
+            resilienceTuner.recordRejection("tts");
+            return Mono.error(new RuntimeException("TTS服务繁忙，请稍后重试"));
+        }
+
+        resilienceTuner.recordCall("tts");
 
         return ttsWebClient
                 .post()
@@ -91,12 +126,20 @@ public class TtsService {
                                         log.info("TTS重试第{}次", 
                                                 retrySignal.totalRetries() + 1))
                 )
-                .doOnSuccess(audioUrl -> log.info("文本转语音成功，URL：{}", audioUrl))
+                //.doOnSuccess(audioUrl -> log.info("文本转语音成功，URL：{}", audioUrl))
+                .doOnSuccess(
+                        audioUrl -> {
+                            ttsCircuitBreaker.onSuccess(System.nanoTime() - startTime, TimeUnit.NANOSECONDS);
+                            log.info("文本转语音成功，URL：{}", audioUrl);
+                        }
+                )
                 .doOnError(error -> {
+                    ttsCircuitBreaker.onError(System.nanoTime() - startTime, TimeUnit.NANOSECONDS, error);
                     log.error("文本转语音最终失败，文本：{}，错误详情：", text, error);
                     // 记录更多上下文信息
                     log.error("TTS配置 - API URL: {}, 超时: {}", ttsProperties.getApiUrl(), ttsProperties.getTimeout());
                 })
+                .doFinally(signalType -> ttsBulkhead.releasePermission())
                 .onErrorReturn("TTS服务暂时不可用，请稍后重试");
     }
 

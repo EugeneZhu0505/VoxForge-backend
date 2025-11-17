@@ -4,8 +4,6 @@ import com.eugenezhu.voxforge.model.*;
 import com.eugenezhu.voxforge.repository.SessionRepository;
 import com.eugenezhu.voxforge.repository.TaskChainRepository;
 import com.eugenezhu.voxforge.repository.TaskItemRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.eugenezhu.voxforge.model.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -34,6 +32,9 @@ public class TaskChainService {
     private final SessionRepository sessionRepository;
     private final TaskChainRepository taskChainRepository;
     private final TaskItemRepository taskItemRepository;
+
+    private final TaskStateMachine taskStateMachine;
+    private final SagaService sagaService;
 
     /**
      * 调用 llm 解析用户输入, 获得输出, 生成任务链
@@ -80,8 +81,20 @@ public class TaskChainService {
                                                                 return taskItemRepository.save(firstTask)
                                                                         .flatMap(
                                                                                 updatedTask ->
-                                                                                        ttsService.generateTaskResponse(updatedTask.getTitle())
-                                                                                                .map(audioUrl -> buildInitialResponse(llmResponse, savedTaskChain, savedTasks, audioUrl))
+                                                                                        //ttsService.generateTaskResponse(updatedTask.getTitle())
+                                                                                        //        .map(audioUrl -> buildInitialResponse(llmResponse, savedTaskChain, savedTasks, audioUrl))
+                                                                                taskChainRepository.findById(savedTaskChain.getId())
+                                                                                        .flatMap(
+                                                                                                chain -> {
+                                                                                                    chain.setStatus(taskStateMachine.next(chain.getStatus(), "START"));
+                                                                                                    chain.setUpdatedAt(LocalDateTime.now());
+                                                                                                    return taskChainRepository.save(chain);
+                                                                                                }
+                                                                                        )
+                                                                                        .then(
+                                                                                                ttsService.generateTaskResponse(updatedTask.getTitle())
+                                                                                                        .map(audioUrl -> buildInitialResponse(llmResponse, savedTaskChain, savedTasks, audioUrl))
+                                                                                        )
                                                                         );
                                                             } else {
                                                                 // 没有任务返回空响应
@@ -117,56 +130,61 @@ public class TaskChainService {
                 .flatMap(
                         updatedSession -> sessionRepository.save(updatedSession)
                                 .flatMap(
-                                        savedSession -> getNextTask(savedSession)
-                                                .flatMap(
-                                                        task -> {
-                                                            if (task != null) {
-                                                                log.info("找到下一个任务: {}, 状态: {}", task.getId(), task.getStatus());
-                                                                // 更新任务状态为 READY
-                                                                task.setStatus("READY");
-                                                                task.setUpdatedAt(LocalDateTime.now());
-                                                                return taskItemRepository.save(task)
-                                                                        .flatMap(
-                                                                                savedTask -> {
-                                                                                    // 更新会话的当前任务ID
-                                                                                    savedSession.setCurrentTaskId(savedTask.getId());
-                                                                                    savedSession.setUpdatedAt(LocalDateTime.now());
-                                                                                    return sessionRepository.save(savedSession)
-                                                                                            .then(ttsService.generateTaskResponse(savedTask.getTitle())
-                                                                                                    .onErrorReturn("") // 如果TTS失败，返回空字符串而不是null
-                                                                                            )
-                                                                                            .map(audioUrl -> buildTaskResponse(savedTask, audioUrl, savedSession))
-                                                                                            .switchIfEmpty(Mono.just(buildTaskResponse(savedTask, "", savedSession))); // 确保不返回null
-                                                                                }
-                                                                        );
-                                                            } else {
-                                                                log.info("所有任务执行完毕，返回完成响应");
-                                                                // 所有任务执行完毕，返回完成响应
-                                                                return taskChainRepository.findBySessionId(savedSession.getId())
-                                                                        .flatMap(
-                                                                                taskChain -> {
-                                                                                    taskChain.setStatus("COMPLETED");
-                                                                                    taskChain.setUpdatedAt(LocalDateTime.now());
-                                                                                    taskChain.setCompletedAt(LocalDateTime.now());
-                                                                                    return taskChainRepository.save(taskChain);
-                                                                                }
-                                                                        )
-                                                                        .then(Mono.fromCallable(() -> {
-                                                                            // 更新会话状态
-                                                                            savedSession.setStatus("COMPLETED");
-                                                                            savedSession.setCurrentTaskId(null);
-                                                                            savedSession.setUpdatedAt(LocalDateTime.now());
-                                                                            return savedSession;
-                                                                        }))
-                                                                        .flatMap(sessionRepository::save)
-                                                                        .then(ttsService.textToSpeech("所有任务已完成")
-                                                                                .onErrorReturn("") // 如果TTS失败，返回空字符串而不是null
-                                                                        )
-                                                                        .map(audioUrl -> buildCompletionResponse(audioUrl, savedSession))
-                                                                        .switchIfEmpty(Mono.just(buildCompletionResponse("", savedSession))); // 确保不返回null
-                                                            }
-                                                        }
-                                                )
+                                        savedSession -> taskChainRepository.findBySessionId(savedSession.getId())
+                                                .flatMap(tc -> {
+                                                    if ("FAILED".equalsIgnoreCase(tc.getStatus())) {
+                                                        java.util.List<String> cmds = sagaService.rollback(savedSession.getId());
+                                                        return ttsService.textToSpeech("发生失败，正在回退")
+                                                                .onErrorReturn("")
+                                                                .map(audioUrl -> buildRollbackResponse(cmds, savedSession));
+                                                    }
+                                                    return getNextTask(savedSession)
+                                                            .flatMap(
+                                                                    task -> {
+                                                                        if (task != null) {
+                                                                            log.info("找到下一个任务: {}, 状态: {}", task.getId(), task.getStatus());
+                                                                            task.setStatus("READY");
+                                                                            task.setUpdatedAt(LocalDateTime.now());
+                                                                            return taskItemRepository.save(task)
+                                                                                    .flatMap(
+                                                                                            savedTask -> {
+                                                                                                savedSession.setCurrentTaskId(savedTask.getId());
+                                                                                                savedSession.setUpdatedAt(LocalDateTime.now());
+                                                                                                return sessionRepository.save(savedSession)
+                                                                                                        .then(ttsService.generateTaskResponse(savedTask.getTitle())
+                                                                                                                .onErrorReturn("")
+                                                                                                        )
+                                                                                                        .map(audioUrl -> buildTaskResponse(savedTask, audioUrl, savedSession))
+                                                                                                        .switchIfEmpty(Mono.just(buildTaskResponse(savedTask, "", savedSession)));
+                                                                                            }
+                                                                                    );
+                                                                        } else {
+                                                                            log.info("所有任务执行完毕，返回完成响应");
+                                                                            return taskChainRepository.findBySessionId(savedSession.getId())
+                                                                                    .flatMap(
+                                                                                            taskChain -> {
+                                                                                                taskChain.setStatus("COMPLETED");
+                                                                                                taskChain.setUpdatedAt(LocalDateTime.now());
+                                                                                                taskChain.setCompletedAt(LocalDateTime.now());
+                                                                                                return taskChainRepository.save(taskChain);
+                                                                                            }
+                                                                                    )
+                                                                                    .then(Mono.fromCallable(() -> {
+                                                                                        savedSession.setStatus("COMPLETED");
+                                                                                        savedSession.setCurrentTaskId(null);
+                                                                                        savedSession.setUpdatedAt(LocalDateTime.now());
+                                                                                        return savedSession;
+                                                                                    }))
+                                                                                    .flatMap(sessionRepository::save)
+                                                                                    .then(ttsService.textToSpeech("所有任务已完成")
+                                                                                            .onErrorReturn("")
+                                                                                    )
+                                                                                    .map(audioUrl -> buildCompletionResponse(audioUrl, savedSession))
+                                                                                    .switchIfEmpty(Mono.just(buildCompletionResponse("", savedSession)));
+                                                                        }
+                                                                    }
+                                                            );
+                                                })
                                 )
                 )
                 .doOnSuccess(response -> {
@@ -279,6 +297,7 @@ public class TaskChainService {
                                     task.setStatus("SUCCESS");
                                     task.setResult(taskFeedback.getFeedback());
                                     task.setUpdatedAt(LocalDateTime.now());
+                                    sagaService.recordTaskSuccess(session.getId(), task);
                                     break;
                                 case "FAILED":
                                     log.info("任务失败，任务ID: {}, 错误信息: {}", task.getId(), taskFeedback.getFeedback());
@@ -286,6 +305,15 @@ public class TaskChainService {
                                     task.setResult(taskFeedback.getFeedback());
                                     task.setRetries(task.getRetries() + 1);
                                     task.setUpdatedAt(LocalDateTime.now());
+                                    if (task.getRetries() >= task.getMaxRetries()) {
+                                        taskChainRepository.findBySessionId(session.getId())
+                                                .flatMap(tc -> {
+                                                    tc.setStatus(taskStateMachine.next(tc.getStatus(), "FAIL"));
+                                                    tc.setUpdatedAt(LocalDateTime.now());
+                                                    return taskChainRepository.save(tc);
+                                                })
+                                                .subscribe();
+                                    }
                                     break;
                                 case "RETRY":
                                     // 重试任务
@@ -293,6 +321,13 @@ public class TaskChainService {
                                     task.setStatus("PENDING");
                                     task.setRetries(task.getRetries() + 1);
                                     task.setUpdatedAt(LocalDateTime.now());
+                                    taskChainRepository.findBySessionId(session.getId())
+                                            .flatMap(tc -> {
+                                                tc.setStatus(taskStateMachine.next(tc.getStatus(), "RETRY"));
+                                                tc.setUpdatedAt(LocalDateTime.now());
+                                                return taskChainRepository.save(tc);
+                                            })
+                                            .subscribe();
                                     break;
                                 default:
                                     log.warn("未知的任务状态: {}", taskFeedback.getStatus());
@@ -317,6 +352,18 @@ public class TaskChainService {
         response.setText(reply != null ? reply : "处理完成");
         response.setSessionId(""); // 设置默认sessionId
         response.setTaskList(List.of()); // 设置空的任务列表，避免空指针异常
+        return response;
+    }
+
+    private ResponseDto buildRollbackResponse(java.util.List<String> cmds, Session session) {
+        ResponseDto response = new ResponseDto();
+        response.setSessionId(session.getId().toString());
+        response.setText("发生失败，已触发回退");
+        response.setCmd(String.join(" && ", cmds));
+        ResponseDto.TaskFeedback tf = new ResponseDto.TaskFeedback();
+        tf.setStatus("FAILED");
+        tf.setMessage("已回退");
+        response.setTaskFeedback(tf);
         return response;
     }
 
@@ -348,6 +395,7 @@ public class TaskChainService {
             TaskItem taskItem = new TaskItem();
             taskItem.setTitle(taskDef.getTitle());
             taskItem.setCmd(taskDef.getCmd());
+            taskItem.setUndoCmd(taskDef.getUndoCmd());
             taskItem.setStatus("PENDING");
             taskItem.setStepOrder(stepOrder.getAndIncrement());
             taskItem.setRetries(0);

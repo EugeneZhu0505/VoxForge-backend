@@ -1,10 +1,14 @@
 package com.eugenezhu.voxforge.service;
 
 import com.eugenezhu.voxforge.config.AiConfig;
+import com.eugenezhu.voxforge.model.CommandTemplate;
 import com.eugenezhu.voxforge.model.LlmRequest;
 import com.eugenezhu.voxforge.model.LlmResponse;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.resilience4j.bulkhead.Bulkhead;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.ratelimiter.RateLimiter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -18,6 +22,7 @@ import reactor.util.retry.Retry;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @projectName: VoxForge
@@ -36,12 +41,47 @@ public class LlmService {
     private final AiConfig.LlmProperties llmProperties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public Mono<LlmResponse> parseUserInput(String text, java.util.Map<String, Object> clientEnv) {
+    @Qualifier("llmRateLimiter")
+    private final RateLimiter llmRateLimiter;
+
+    @Qualifier("llmBulkHead")
+    private final Bulkhead llmBulkhead;
+
+    @Qualifier("llmCircuitBreaker")
+    private final CircuitBreaker llmCircuitBreaker;
+
+    private final ResilienceTuner resilienceTuner;
+    private final RagService ragService;
+
+    public Mono<LlmResponse> parseUserInput(String text, Map<String, Object> clientEnv) {
         log.info("正在解析用户输入：{}", text);
 
-        String prompt = buildStartPrompt(clientEnv);
+        //String prompt = buildStartPrompt(clientEnv);
+
+        List<CommandTemplate> candidates = ragService.retrieve(text, clientEnv, 5);
+        String prompt = buildStartPromptRag(clientEnv, candidates);
 
         LlmRequest request = new LlmRequest(prompt, text, llmProperties.getModel());
+
+        // 限流
+        long startTime = System.nanoTime();
+
+        if (!llmCircuitBreaker.tryAcquirePermission()) {
+            resilienceTuner.recordRejection("llm");
+            return Mono.error(new RuntimeException("llmCircuitBreaker 拒绝请求"));
+        }
+
+        if (!llmBulkhead.tryAcquirePermission()) {
+            resilienceTuner.recordRejection("llm");
+            return Mono.error(new RuntimeException("llmBulkhead 拒绝请求"));
+        }
+
+        if (!llmRateLimiter.acquirePermission()) {
+            resilienceTuner.recordRejection("llm");
+            return Mono.error(new RuntimeException("llmRateLimiter 拒绝请求"));
+        }
+
+        resilienceTuner.recordCall("llm");
 
         return llmWebClient
                 .post()
@@ -57,8 +97,21 @@ public class LlmService {
                                 .maxBackoff(Duration.ofSeconds(10))
                                 .filter(throwable -> !(throwable instanceof IllegalArgumentException))
                 )
-                .doOnSuccess(response -> log.info("成功解析用户输入, 生成 {} 个任务", response.getTasks().size()))
-                .doOnError(error -> log.error("解析用户输入失败：{}", error.getMessage(), error))
+                //.doOnSuccess(response -> log.info("成功解析用户输入, 生成 {} 个任务", response.getTasks().size()))
+                //.doOnError(error -> log.error("解析用户输入失败：{}", error.getMessage(), error))
+                .doOnSuccess(
+                        response -> {
+                            llmCircuitBreaker.onSuccess(System.nanoTime() - startTime, TimeUnit.NANOSECONDS);
+                            log.info("成功解析用户输入, 生成 {} 个任务", response.getTasks().size());
+                        }
+                )
+                .doOnError(
+                        error -> {
+                            llmCircuitBreaker.onError(System.nanoTime() - startTime, TimeUnit.NANOSECONDS, error);
+                            log.error("解析用户输入失败：{}", error.getMessage(), error);
+                        }
+                )
+                .doFinally(signalType -> llmBulkhead.releasePermission())
                 .onErrorReturn(createErrorResponse("LLM 服务暂时不可用，请稍后重试"));
     }
 
@@ -192,6 +245,40 @@ public class LlmService {
                 **严格要求：只返回JSON，不要有任何其他文字！**
                 """,
                 clientEnvStr.isEmpty() ? "无详细客户端环境信息, 默认为Windows环境, 此时启动软件等命令不要给带有路径的, 如C:\\Program Files\\Google\\Chrome\\chrome.exe" : clientEnvStr
+        );
+    }
+
+    private String buildStartPromptRag(Map<String, Object> clientEnv, List<CommandTemplate> candidates) {
+        String clientEnvStr = "";
+        if (clientEnv != null) {
+            try {
+                clientEnvStr = objectMapper.writeValueAsString(clientEnv);
+            } catch (Exception e) {
+                clientEnvStr = clientEnv.toString();
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < Math.min(5, candidates.size()); i++) {
+            com.eugenezhu.voxforge.model.CommandTemplate c = candidates.get(i);
+            sb.append(i + 1).append('.').append(' ').append(c.getCmd()).append(' ').append('-').append(' ').append(c.getDesc()).append('\n');
+        }
+        String hint = sb.toString();
+        return String.format("""
+                你是一个智能语音助手，专门帮助用户完成任务。
+                用户的客户端环境信息：
+                %s
+                参考候选命令：
+                %s
+                生成JSON任务链，优先提供结合环境信息修改后的候选命令。
+                {
+                  "reply": "",
+                  "tasks": [
+                    {"title": "","cmd": ""}
+                  ]
+                }
+                """,
+                clientEnvStr.isEmpty() ? "无详细客户端环境信息" : clientEnvStr,
+                hint
         );
     }
 

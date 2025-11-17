@@ -4,6 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.Transient;
 import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.relational.core.mapping.Table;
 
@@ -30,6 +31,8 @@ public class TaskItem {
     private String description;
     @Column("cmd")
     private String cmd; // 命令行命令
+    @Transient
+    private String undoCmd; // 撤销命令
     @Column("status")
     private String status; // 状态: PENDING, READY, PROMPTED, WAITING_CLIENT, SUCCESS, FAILED, SKIPPED, RETRYING
     @Column("task_chain_id")

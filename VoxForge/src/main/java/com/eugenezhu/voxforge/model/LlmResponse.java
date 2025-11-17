@@ -21,6 +21,7 @@ public class LlmResponse {
     public static class TaskDefinition {
         private String title;
         private String cmd;
+        private String undoCmd;
         private Integer maxRetries;
     }
 }
