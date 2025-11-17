@@ -33,7 +33,7 @@ import java.util.Map;
 // 配置类
 @Configuration
 // 指定 Spring 扫描 R2DBC 仓库接口的包路径
-@EnableR2dbcRepositories(basePackages = "com.hzau.voxforge.repository")
+@EnableR2dbcRepositories(basePackages = "com.eugenezhu.voxforge.repository")
 public class DatabaseConfig extends AbstractR2dbcConfiguration {
 
     @Value("${spring.r2dbc.url}")
