@@ -16,10 +16,10 @@ import java.util.Map;
 public class TaskStateMachine {
 
     private final Map<String, Map<String, String>> table = Map.of(
-            "PENDING", Map.of("START", "RUNNING"),
-            "RUNNING", Map.of("COMPLETE", "DONE", "FAIL", "FAILED"),
-            "FAILED", Map.of("RETRY", "RUNNING"),
-            "DONE", Map.of()
+            "PENDING", Map.of("START", "IN_PROGRESS"),
+            "IN_PROGRESS", Map.of("COMPLETE", "COMPLETED", "FAIL", "FAILED"),
+            "FAILED", Map.of("RETRY", "IN_PROGRESS"),
+            "COMPLETED", Map.of()
     );
 
     public String next(String current, String event) {

@@ -9,6 +9,8 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.BodyInserters;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -58,36 +60,44 @@ public class RagService {
      * @param k 返回的命令数量
      * @return 与用户输入最相关的命令列表
      */
-    public List<CommandTemplate> retrieve(String text, Map<String, Object> env, int k) {
-        String os = env.get("os").toString();
+    public Mono<List<CommandTemplate>> retrieve(String text, Map<String, Object> env, int k) {
+        String os = env != null ? String.valueOf(env.getOrDefault("os", "Windows 11")) : "Windows 11";
         List<CommandTemplate> candidates = library.stream()
                 .filter(cmd -> cmd.getOs().equals(os))
                 .toList();
-        ensureTemplateVectors(candidates);
-        double[] q = embedBlocking(text);
-        if (q == null) {
-            return fallbackTfRetrieve(text, candidates, k);
-        }
 
-        return candidates.stream()
-                .map(t -> Map.entry(t, cosine(q, vectors.get(t))))
-                .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
-                .limit(k)
-                .map(Map.Entry::getKey)
-                .toList();
+        return ensureTemplateVectors(candidates)
+                .then(
+                        embed(text).defaultIfEmpty(null)
+                                .map(
+                                        q -> {
+                                            if (q == null) return fallbackTfRetrieve(text, candidates, k);
+                                            return candidates.stream()
+                                                    .map(t -> Map.entry(t, cosine(q, vectors.get(t))))
+                                                    .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
+                                                    .limit(k)
+                                                    .map(Map.Entry::getKey)
+                                                    .toList();
+                                        }
+                                )
+                );
+
     }
 
     /**
      * 确保命令模板的向量存在
      * @param candidates 命令模板列表
      */
-    private void ensureTemplateVectors(List<CommandTemplate> candidates) {
+    private Mono<Void> ensureTemplateVectors(List<CommandTemplate> candidates) {
         List<CommandTemplate> missing = candidates.stream().filter(t -> !vectors.containsKey(t)).toList();
-        if (missing.isEmpty()) return;
-        for (CommandTemplate t : missing) {
-            double[] v = embedBlocking(t.getCmd() + " " + t.getDesc());
-            if (v != null) vectors.put(t, v);
-        }
+        if (missing.isEmpty()) return Mono.empty();
+        return Flux.fromIterable(missing)
+                .flatMap(
+                        t -> embed(t.getCmd() + " " + t.getDesc())
+                                .filter(v -> v != null)
+                                .doOnNext(v -> vectors.put(t, v))
+                )
+                .then();
     }
 
     /**
@@ -95,41 +105,36 @@ public class RagService {
      * @param text 输入文本
      * @return 嵌入向量数组，或null如果失败
      */
-    private double[] embedBlocking(String text) {
-        try {
-            Map<String, Object> body = new HashMap<>();
-            body.put("input", text);
-            body.put("model", llmProperties.getModel());
-            Map<String, Object> resp = llmWebClient.post()
-                    .uri("/embeddings")
-                    .header("Authorization", "Bearer " + llmProperties.getApiKey())
-                    .contentType(MediaType.APPLICATION_NDJSON)
-                    .body(BodyInserters.fromValue(body))
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .onErrorReturn(Collections.emptyMap())
-                    .blockOptional()
-                    .orElse(Collections.emptyMap());
-
-            Object data = resp.get("data");
-            if (data instanceof List<?> list && !list.isEmpty()) {
-                Object first = list.get(0);
-                if (first instanceof Map<?,?> m) {
-                    Object emb = m.get("embedding");
-                    if (emb instanceof List<?> vec) {
-                        double[] arr = new double[vec.size()];
-                        for (int i = 0; i < vec.size(); i++) {
-                            Object x = vec.get(i);
-                            arr[i] = x instanceof Number ? ((Number) x).doubleValue() : 0d;
+    private Mono<double[]> embed(String text) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("input", text);
+        body.put("model", llmProperties.getModel());
+        return llmWebClient.post()
+                .uri("/embeddings")
+                .header("Authorization", "Bearer " + llmProperties.getApiKey())
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(BodyInserters.fromValue(body))
+                .retrieve()
+                .bodyToMono(Map.class)
+                .map(resp -> {
+                    Object data = resp.get("data");
+                    if (data instanceof List<?> list && !list.isEmpty()) {
+                        Object first = list.get(0);
+                        if (first instanceof Map<?,?> m) {
+                            Object emb = m.get("embedding");
+                            if (emb instanceof List<?> vec) {
+                                double[] arr = new double[vec.size()];
+                                for (int i = 0; i < vec.size(); i++) {
+                                    Object x = vec.get(i);
+                                    arr[i] = x instanceof Number ? ((Number) x).doubleValue() : 0d;
+                                }
+                                return normalize(arr);
+                            }
                         }
-                        return normalize(arr);
                     }
-                }
-            }
-            return null;
-        } catch (Exception e) {
-            return null;
-        }
+                    return null;
+                })
+                .onErrorResume(e -> Mono.empty());
     }
 
     /**

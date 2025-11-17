@@ -56,63 +56,56 @@ public class LlmService {
     public Mono<LlmResponse> parseUserInput(String text, Map<String, Object> clientEnv) {
         log.info("正在解析用户输入：{}", text);
 
-        //String prompt = buildStartPrompt(clientEnv);
+        return ragService.retrieve(text, clientEnv, 5)
+                .defaultIfEmpty(List.of())
+                .flatMap(candidates -> {
+                    String prompt = buildStartPromptRag(clientEnv, candidates);
+                    LlmRequest request = new LlmRequest(prompt, text, llmProperties.getModel());
 
-        List<CommandTemplate> candidates = ragService.retrieve(text, clientEnv, 5);
-        String prompt = buildStartPromptRag(clientEnv, candidates);
+                    long startTime = System.nanoTime();
 
-        LlmRequest request = new LlmRequest(prompt, text, llmProperties.getModel());
+                    if (!llmCircuitBreaker.tryAcquirePermission()) {
+                        resilienceTuner.recordRejection("llm");
+                        return Mono.error(new RuntimeException("llmCircuitBreaker 拒绝请求"));
+                    }
 
-        // 限流
-        long startTime = System.nanoTime();
+                    if (!llmBulkhead.tryAcquirePermission()) {
+                        resilienceTuner.recordRejection("llm");
+                        return Mono.error(new RuntimeException("llmBulkhead 拒绝请求"));
+                    }
 
-        if (!llmCircuitBreaker.tryAcquirePermission()) {
-            resilienceTuner.recordRejection("llm");
-            return Mono.error(new RuntimeException("llmCircuitBreaker 拒绝请求"));
-        }
+                    if (!llmRateLimiter.acquirePermission()) {
+                        resilienceTuner.recordRejection("llm");
+                        return Mono.error(new RuntimeException("llmRateLimiter 拒绝请求"));
+                    }
 
-        if (!llmBulkhead.tryAcquirePermission()) {
-            resilienceTuner.recordRejection("llm");
-            return Mono.error(new RuntimeException("llmBulkhead 拒绝请求"));
-        }
+                    resilienceTuner.recordCall("llm");
 
-        if (!llmRateLimiter.acquirePermission()) {
-            resilienceTuner.recordRejection("llm");
-            return Mono.error(new RuntimeException("llmRateLimiter 拒绝请求"));
-        }
-
-        resilienceTuner.recordCall("llm");
-
-        return llmWebClient
-                .post()
-                .uri("/chat/completions")
-                .header("Authorization", "Bearer " + llmProperties.getApiKey())
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(BodyInserters.fromValue(request))
-                .retrieve()
-                .bodyToMono(String.class)
-                .map(this::parseLlmResponse)
-                .retryWhen(
-                        Retry.backoff(5, Duration.ofSeconds(3))
-                                .maxBackoff(Duration.ofSeconds(10))
-                                .filter(throwable -> !(throwable instanceof IllegalArgumentException))
-                )
-                //.doOnSuccess(response -> log.info("成功解析用户输入, 生成 {} 个任务", response.getTasks().size()))
-                //.doOnError(error -> log.error("解析用户输入失败：{}", error.getMessage(), error))
-                .doOnSuccess(
-                        response -> {
-                            llmCircuitBreaker.onSuccess(System.nanoTime() - startTime, TimeUnit.NANOSECONDS);
-                            log.info("成功解析用户输入, 生成 {} 个任务", response.getTasks().size());
-                        }
-                )
-                .doOnError(
-                        error -> {
-                            llmCircuitBreaker.onError(System.nanoTime() - startTime, TimeUnit.NANOSECONDS, error);
-                            log.error("解析用户输入失败：{}", error.getMessage(), error);
-                        }
-                )
-                .doFinally(signalType -> llmBulkhead.releasePermission())
-                .onErrorReturn(createErrorResponse("LLM 服务暂时不可用，请稍后重试"));
+                    return llmWebClient
+                            .post()
+                            .uri("/chat/completions")
+                            .header("Authorization", "Bearer " + llmProperties.getApiKey())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(BodyInserters.fromValue(request))
+                            .retrieve()
+                            .bodyToMono(String.class)
+                            .map(this::parseLlmResponse)
+                            .retryWhen(
+                                    Retry.backoff(5, Duration.ofSeconds(3))
+                                            .maxBackoff(Duration.ofSeconds(10))
+                                            .filter(throwable -> !(throwable instanceof IllegalArgumentException))
+                            )
+                            .doOnSuccess(response -> {
+                                llmCircuitBreaker.onSuccess(System.nanoTime() - startTime, TimeUnit.NANOSECONDS);
+                                log.info("成功解析用户输入, 生成 {} 个任务", response.getTasks().size());
+                            })
+                            .doOnError(error -> {
+                                llmCircuitBreaker.onError(System.nanoTime() - startTime, TimeUnit.NANOSECONDS, error);
+                                log.error("解析用户输入失败：{}", error.getMessage(), error);
+                            })
+                            .doFinally(signalType -> llmBulkhead.releasePermission())
+                            .onErrorReturn(createErrorResponse("LLM 服务暂时不可用，请稍后重试"));
+                });
     }
 
     public Mono<String> generateNextStep(String taskTitle, String feedback, java.util.Map<String, Object> clientEnv) {
@@ -147,7 +140,7 @@ public class LlmService {
 
                 // 清理可能的非JSON内容
                 String cleanedContent = cleanJsonContent(content);
-                
+
                 // 解析JSON格式的任务内容
                 return objectMapper.readValue(cleanedContent, LlmResponse.class);
             }
@@ -158,24 +151,24 @@ public class LlmService {
             return createErrorResponse("解析LLM响应失败");
         }
     }
-    
+
     private String cleanJsonContent(String content) {
         if (content == null) {
             return "{}";
         }
-        
+
         // 去除前后空白字符
         content = content.trim();
-        
+
         // 查找第一个 { 和最后一个 }
         int firstBrace = content.indexOf('{');
         int lastBrace = content.lastIndexOf('}');
-        
+
         if (firstBrace != -1 && lastBrace != -1 && firstBrace < lastBrace) {
             // 提取JSON部分
             return content.substring(firstBrace, lastBrace + 1);
         }
-        
+
         // 如果没有找到有效的JSON结构，返回空的响应
         log.warn("无法从LLM响应中提取有效JSON: {}", content);
         return "{\"reply\":\"解析失败\",\"tasks\":[]}";

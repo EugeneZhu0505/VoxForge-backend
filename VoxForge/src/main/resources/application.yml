@@ -7,7 +7,7 @@ spring:
   application:
     name: voxforge
   r2dbc:
-    url: r2dbc:postgresql://122.205.72.64:5432/voxforge
+    url: r2dbc:postgresql://localhost:5432/voxforge
     username: postgres
     password: 12345678
     pool:
@@ -81,7 +81,7 @@ oss:
 
 logging:
   level:
-    com.hzau.voxforge: debug
+    com.eugenezhu.voxforge: debug
     reactor.netty: info
     org.springframework.r2dbc: debug
     io.r2dbc.postgresql: debug

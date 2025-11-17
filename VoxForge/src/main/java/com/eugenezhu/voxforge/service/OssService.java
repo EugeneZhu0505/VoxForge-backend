@@ -13,6 +13,7 @@ import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Mono;
+import reactor.core.scheduler.Schedulers;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -97,7 +98,7 @@ public class OssService {
                         throw new RuntimeException("文件上传失败", e);
                     }
                 }
-        );
+        ).subscribeOn(Schedulers.boundedElastic());
     }
 
     public Mono<String> uploadFile(byte[] fileData, String originalFileName) {
@@ -130,7 +131,7 @@ public class OssService {
                         throw new RuntimeException("文件上传失败", e);
                     }
                 }
-        );
+        ).subscribeOn(Schedulers.boundedElastic());
     }
 
     private String generateFileName(String originalFilename) {
