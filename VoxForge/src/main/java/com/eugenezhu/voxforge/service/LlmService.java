@@ -44,7 +44,7 @@ public class LlmService {
     @Qualifier("llmRateLimiter")
     private final RateLimiter llmRateLimiter;
 
-    @Qualifier("llmBulkHead")
+    @Qualifier("llmBulkhead")
     private final Bulkhead llmBulkhead;
 
     @Qualifier("llmCircuitBreaker")

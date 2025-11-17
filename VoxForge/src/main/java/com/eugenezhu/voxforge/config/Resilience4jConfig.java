@@ -102,8 +102,8 @@ public class Resilience4jConfig {
      * @param registry
      * @return
      */
-    @Bean("asrBulkHead")
-    public Bulkhead asrBulkHead(BulkheadRegistry registry) {
+    @Bean("asrBulkhead")
+    public Bulkhead asrBulkhead(BulkheadRegistry registry) {
         BulkheadConfig cfg = BulkheadConfig.custom()
                 .maxConcurrentCalls(10) // 最大并发调用数为 10
                 .maxWaitDuration(Duration.ofMillis(100)) // 最大等待时间为 100 毫秒
@@ -111,8 +111,8 @@ public class Resilience4jConfig {
         return registry.bulkhead("asrApi", cfg);
     }
 
-    @Bean("ttsBulkHead")
-    public Bulkhead ttsBulkHead(BulkheadRegistry registry) {
+    @Bean("ttsBulkhead")
+    public Bulkhead ttsBulkhead(BulkheadRegistry registry) {
         BulkheadConfig cfg = BulkheadConfig.custom()
                 .maxConcurrentCalls(10) // 最大并发调用数为 10
                 .maxWaitDuration(Duration.ofMillis(100)) // 最大等待时间为 100 毫秒
@@ -120,8 +120,8 @@ public class Resilience4jConfig {
         return registry.bulkhead("ttsApi", cfg);
     }
 
-    @Bean("llmBulkHead")
-    public Bulkhead llmBulkHead(BulkheadRegistry registry) {
+    @Bean("llmBulkhead")
+    public Bulkhead llmBulkhead(BulkheadRegistry registry) {
         BulkheadConfig cfg = BulkheadConfig.custom()
                 .maxConcurrentCalls(50) // 最大并发调用数为 50
                 .maxWaitDuration(Duration.ofMillis(200)) // 最大等待时间为 200 毫秒

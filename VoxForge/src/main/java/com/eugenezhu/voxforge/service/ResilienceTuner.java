@@ -38,13 +38,13 @@ public class ResilienceTuner {
     @Qualifier("llmRateLimiter")
     private final RateLimiter llmRateLimiter;
 
-    @Qualifier("asrBulkHead")
+    @Qualifier("asrBulkhead")
     private final Bulkhead asrBulkhead;
 
-    @Qualifier("ttsBulkHead")
+    @Qualifier("ttsBulkhead")
     private final Bulkhead ttsBulkhead;
 
-    @Qualifier("llmBulkHead")
+    @Qualifier("llmBulkhead")
     private final Bulkhead llmBulkhead;
 
     private final ConcurrentHashMap<String, AtomicLong> rejects = new ConcurrentHashMap<>(); // 记录拒绝请求的次数

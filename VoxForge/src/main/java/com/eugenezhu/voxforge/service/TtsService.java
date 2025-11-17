@@ -40,7 +40,7 @@ public class TtsService {
     @Qualifier("ttsCircuitBreaker")
     private final CircuitBreaker ttsCircuitBreaker;
 
-    @Qualifier("ttsBulkHead")
+    @Qualifier("ttsBulkhead")
     private final Bulkhead ttsBulkhead;
 
     @Qualifier("ttsRateLimiter")

@@ -39,8 +39,8 @@ public class AsrService {
     private final CircuitBreaker asrCircuitBreaker;
     //@Qualifier("asrRetry")
     //private final Retry asrRetry;
-    @Qualifier("asrBulkHead")
-    private final Bulkhead asrBulkHead;
+    @Qualifier("asrBulkhead")
+    private final Bulkhead asrBulkhead;
     @Qualifier("asrRateLimiter")
     private final RateLimiter asrRateLimiter;
 
@@ -74,7 +74,7 @@ public class AsrService {
             return Mono.error(new RuntimeException("ASR服务拒绝请求"));
         }
 
-        if (!asrBulkHead.tryAcquirePermission()) {
+        if (!asrBulkhead.tryAcquirePermission()) {
             resilienceTuner.recordRejection("asr"); // 记录asr拒绝请求
             return Mono.error(new RuntimeException("ASR服务拒绝请求"));
         }
@@ -153,7 +153,7 @@ public class AsrService {
                     log.error("ASR配置 - API URL: {}, 超时: {}", asrProperties.getApiUrl(), asrProperties.getTimeout());
                 })
                 .doFinally(
-                        sig -> asrBulkHead.releasePermission() // 释放bulkhead权限
+                        sig -> asrBulkhead.releasePermission() // 释放bulkhead权限
                 )
                 .onErrorReturn("语音转文本失败"); // 失败时返回默认值
     }
