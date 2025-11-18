@@ -33,6 +33,10 @@ public class TaskItem {
     private String cmd; // 命令行命令
     @Transient
     private String undoCmd; // 撤销命令
+    @Transient
+    private String shell;
+    @Transient
+    private String os;
     @Column("status")
     private String status; // 状态: PENDING, READY, PROMPTED, WAITING_CLIENT, SUCCESS, FAILED, SKIPPED, RETRYING
     @Column("task_chain_id")

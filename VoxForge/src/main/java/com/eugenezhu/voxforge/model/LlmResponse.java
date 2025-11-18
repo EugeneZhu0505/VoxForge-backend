@@ -22,6 +22,8 @@ public class LlmResponse {
         private String title;
         private String cmd;
         private String undoCmd;
+        private String shell;
+        private String os;
         private Integer maxRetries;
     }
 }

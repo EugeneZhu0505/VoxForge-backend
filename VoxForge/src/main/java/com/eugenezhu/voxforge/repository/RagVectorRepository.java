@@ -33,12 +33,21 @@ public class RagVectorRepository {
         String uniqueIdx = "CREATE UNIQUE INDEX IF NOT EXISTS kb_commands_unique ON kb_commands (cmd, os, shell)";
         String hnswIdx = "CREATE INDEX IF NOT EXISTS idx_kb_commands_embedding_hnsw ON kb_commands USING hnsw (embedding vector_cosine_ops)";
         String osIdx = "CREATE INDEX IF NOT EXISTS idx_kb_commands_os ON kb_commands (os)";
+        String alterDim = "ALTER TABLE kb_commands ALTER COLUMN embedding TYPE vector(" + dimension + ")";
+        String dropHnsw = "DROP INDEX IF EXISTS idx_kb_commands_embedding_hnsw";
+        String dropTable = "DROP TABLE IF EXISTS kb_commands";
 
         return databaseClient.sql(createExt).fetch().rowsUpdated()
-                .then(databaseClient.sql(createTable).fetch().rowsUpdated())
-                .then(databaseClient.sql(uniqueIdx).fetch().rowsUpdated())
-                .then(databaseClient.sql(hnswIdx).fetch().rowsUpdated())
-                .then(databaseClient.sql(osIdx).fetch().rowsUpdated())
+                .flatMap(x -> databaseClient.sql(createTable).fetch().rowsUpdated())
+                .flatMap(x -> databaseClient.sql(alterDim).fetch().rowsUpdated()
+                        .onErrorResume(e -> databaseClient.sql(dropHnsw).fetch().rowsUpdated()
+                                .flatMap(y -> databaseClient.sql(dropTable).fetch().rowsUpdated())
+                                .flatMap(y -> databaseClient.sql(createTable).fetch().rowsUpdated())
+                        )
+                )
+                .flatMap(x -> databaseClient.sql(uniqueIdx).fetch().rowsUpdated())
+                .flatMap(x -> databaseClient.sql(hnswIdx).fetch().rowsUpdated())
+                .flatMap(x -> databaseClient.sql(osIdx).fetch().rowsUpdated())
                 .then();
     }
 

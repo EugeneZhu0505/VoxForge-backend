@@ -58,11 +58,11 @@ external:
 
   # embedding 服务配置 - openai或其他主流
   embedding:
-    api-url: https://api.openai.com/v1
-    api-key: ""
-    model: text-embedding-3-small
+    api-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api-key: sk-55982a07c2084044814f59ec3ef078ab
+    model: text-embedding-v3
     timeout: 60s
-    dimension: 1536
+    dimension: 1024
 
 # JWT 配置
 jwt:
@@ -89,11 +89,11 @@ oss:
 
 logging:
   level:
-    com.eugenezhu.voxforge: debug
+    com.eugenezhu.voxforge: info
     reactor.netty: info
-    org.springframework.r2dbc: debug
-    io.r2dbc.postgresql: debug
-    org.springframework.security: debug
+    org.springframework.r2dbc: info
+    io.r2dbc.postgresql: info
+    org.springframework.security: info
 
 # Swagger/OpenAPI 配置
 springdoc:

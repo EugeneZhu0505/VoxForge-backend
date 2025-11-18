@@ -218,27 +218,20 @@ public class LlmService {
                 
                 请根据用户的输入，分析用户的意图，并生成一个详细的任务链来帮助用户完成目标。
                 
-                **重要：你必须严格按照以下JSON格式返回，不要添加任何解释文字或其他内容，只返回纯JSON：**
-                
+                只返回如下JSON：
                 {
-                  "reply": "对用户的回复消息",
+                  "reply": "",
                   "tasks": [
                     {
-                      "title": "任务标题",
-                      "cmd": "具体的命令或操作"
+                      "title": "",
+                      "cmd": "",
+                      "shell": "cmd|powershell|bash",
+                      "os": "Windows 11|Ubuntu 22.04"
                     }
                   ]
                 }
-                
-                **注意事项：**
-                1. reply字段：包含对用户的友好回复
-                2. tasks数组：包含具体的任务列表
-                3. title：任务的简短描述
-                4. cmd：直接在终端运行即可的命令(无需添加任何前缀或后缀, 如bash、sh等), 客户端接收后直接执行
-                
-                **严格要求：只返回JSON，不要有任何其他文字！**
                 """,
-                clientEnvStr.isEmpty() ? "无详细客户端环境信息, 默认为Windows环境, 此时启动软件等命令不要给带有路径的, 如C:\\Program Files\\Google\\Chrome\\chrome.exe" : clientEnvStr
+                clientEnvStr.isEmpty() ? "无详细客户端环境信息, 默认为Windows环境" : clientEnvStr
         );
     }
 
@@ -267,7 +260,7 @@ public class LlmService {
                 {
                   "reply": "",
                   "tasks": [
-                    {"title": "","cmd": ""}
+                    {"title": "","cmd": "","shell": "cmd|powershell|bash","os": "Windows 11|Ubuntu 22.04"}
                   ]
                 }
                 """,

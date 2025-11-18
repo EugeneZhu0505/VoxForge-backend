@@ -68,7 +68,7 @@ public class TaskChainService {
                             .flatMap(
                                     savedTaskChain -> {
                                         // 创建任务清单
-                                        List<TaskItem> tasks = createTaskItems(llmResponse.getTasks(), savedTaskChain.getId(), userId, sessionId);
+                                        List<TaskItem> tasks = createTaskItems(llmResponse.getTasks(), savedTaskChain.getId(), userId, sessionId, clientEnv);
                                         return Flux.fromIterable(tasks)
                                                 .flatMap(taskItemRepository::save)
                                                 .collectList()
@@ -93,7 +93,9 @@ public class TaskChainService {
                                                                                                 )
                                                                                                 .then(
                                                                                                         ttsService.generateTaskResponse(updatedTask.getTitle())
-                                                                                                                .map(audioUrl -> buildInitialResponse(llmResponse, savedTaskChain, savedTasks, audioUrl))
+                                                                                                                .flatMap(audioUrl -> sessionRepository.findById(sessionId)
+                                                                                                                        .map(session -> buildInitialResponse(llmResponse, savedTaskChain, savedTasks, audioUrl, session))
+                                                                                                                )
                                                                                                 )
                                                                         );
                                                             } else {
@@ -238,6 +240,8 @@ public class TaskChainService {
         response.setText("正在为您" + task.getTitle());
         response.setAudioUrl(audioUrl);
         response.setCmd(task.getCmd());
+        response.setOs(inferOs(session.getClientEnv()));
+        response.setShell(inferShell(session.getClientEnv()));
         response.setTaskList(List.of(task));
         // 设置任务状态
         ResponseDto.TaskFeedback taskFeedback = new ResponseDto.TaskFeedback();
@@ -367,12 +371,14 @@ public class TaskChainService {
         return response;
     }
 
-    private ResponseDto buildInitialResponse(LlmResponse llmResponse, TaskChain taskChain, List<TaskItem> tasks, String audioUrl) {
+    private ResponseDto buildInitialResponse(LlmResponse llmResponse, TaskChain taskChain, List<TaskItem> tasks, String audioUrl, Session session) {
         ResponseDto response = new ResponseDto();
         response.setSessionId(taskChain.getSessionId().toString());
         response.setText("正在为您" + tasks.get(0).getTitle());
         response.setCmd(tasks.get(0).getCmd());
         response.setChainVersion(taskChain.getVersion());
+        response.setOs(inferOs(session.getClientEnv()));
+        response.setShell(inferShell(session.getClientEnv()));
         response.setTaskList(tasks);
         response.setAudioUrl(audioUrl);
         // 设置任务状态
@@ -387,7 +393,19 @@ public class TaskChainService {
         return response;
     }
 
-    private List<TaskItem> createTaskItems(List<LlmResponse.TaskDefinition> taskDefinitions, Long taskChainId, Long userId, Long sessionId) {
+    private String inferOs(java.util.Map<String, Object> env) {
+        if (env == null) return "Windows 11";
+        Object os = env.get("os");
+        return os != null ? String.valueOf(os) : "Windows 11";
+    }
+
+    private String inferShell(java.util.Map<String, Object> env) {
+        String os = inferOs(env);
+        if (os.toLowerCase().contains("windows")) return "cmd";
+        return "bash";
+    }
+
+    private List<TaskItem> createTaskItems(List<LlmResponse.TaskDefinition> taskDefinitions, Long taskChainId, Long userId, Long sessionId, java.util.Map<String, Object> clientEnv) {
         AtomicInteger stepOrder = new AtomicInteger(0);
         List<TaskItem> tasks = new ArrayList<>();
 
@@ -400,6 +418,8 @@ public class TaskChainService {
             taskItem.setTitle(taskDef.getTitle());
             taskItem.setCmd(taskDef.getCmd());
             taskItem.setUndoCmd(taskDef.getUndoCmd());
+            taskItem.setOs(taskDef.getOs() != null ? taskDef.getOs() : inferOs(clientEnv));
+            taskItem.setShell(taskDef.getShell() != null ? taskDef.getShell() : inferShell(clientEnv));
             taskItem.setStatus("PENDING");
             taskItem.setStepOrder(stepOrder.getAndIncrement());
             taskItem.setRetries(0);

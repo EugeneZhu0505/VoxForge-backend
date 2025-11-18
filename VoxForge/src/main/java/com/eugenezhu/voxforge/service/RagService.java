@@ -6,6 +6,8 @@ import com.eugenezhu.voxforge.model.CommandTemplate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.BodyInserters;
@@ -92,8 +94,9 @@ public class RagService {
                         .flatMap(exists -> exists
                                 ? Mono.empty()
                                 : embed(t.getCmd() + " " + t.getDesc())
-                                .filter(v -> v != null)
-                                .flatMap(v -> ragVectorRepository.upsert(t, v))
+                                .switchIfEmpty(Mono.just(new double[embeddingProperties.getDimension()]))
+                                .flatMap(v -> ragVectorRepository.upsert(t, v)
+                                        .doOnSuccess(ignored -> log.info("索引命令模板: {} ({}, {})", t.getCmd(), t.getOs(), t.getShell())))
                         )
                 )
                 .then();
@@ -107,41 +110,80 @@ public class RagService {
     private Mono<double[]> embed(String text) {
         Map<String, Object> body = new HashMap<>();
         body.put("input", text);
+        body.put("inputs", text);
         body.put("model", embeddingProperties.getModel());
+        if (embeddingProperties.getDimension() != null && embeddingProperties.getDimension() > 0) {
+            body.put("dimensions", embeddingProperties.getDimension());
+        }
+        body.put("encoding_format", "float");
+        String path = embeddingProperties.getModel() != null && embeddingProperties.getModel().contains("/") ? "/" : "/embeddings";
         return embeddingWebClient.post()
-                .uri("/embeddings")
+                .uri(path)
                 .header("Authorization", "Bearer " + embeddingProperties.getApiKey())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(BodyInserters.fromValue(body))
                 .retrieve()
-                .bodyToMono(Map.class)
+                .bodyToMono(Object.class)
                 .map(resp -> {
-                    Object data = resp.get("data");
-                    if (data instanceof List<?> list && !list.isEmpty()) {
-                        Object first = list.get(0);
-                        if (first instanceof Map<?,?> m) {
-                            Object emb = m.get("embedding");
-                            if (emb instanceof List<?> vec) {
-                                double[] arr = new double[vec.size()];
-                                for (int i = 0; i < vec.size(); i++) {
-                                    Object x = vec.get(i);
-                                    arr[i] = x instanceof Number ? ((Number) x).doubleValue() : 0d;
+                    if (resp instanceof List<?> vec) {
+                        double[] arr = new double[vec.size()];
+                        for (int i = 0; i < vec.size(); i++) {
+                            Object x = vec.get(i);
+                            arr[i] = x instanceof Number ? ((Number) x).doubleValue() : 0d;
+                        }
+                        return normalize(arr);
+                    } else if (resp instanceof Map<?,?> m) {
+                        Object maybeEmb = m.get("embedding");
+                        if (maybeEmb instanceof List<?> vec) {
+                            double[] arr = new double[vec.size()];
+                            for (int i = 0; i < vec.size(); i++) {
+                                Object x = vec.get(i);
+                                arr[i] = x instanceof Number ? ((Number) x).doubleValue() : 0d;
+                            }
+                            return normalize(arr);
+                        }
+                        Object data = m.get("data");
+                        if (data instanceof List<?> list && !list.isEmpty()) {
+                            Object first = list.get(0);
+                            if (first instanceof Map<?,?> mm) {
+                                Object emb = mm.get("embedding");
+                                if (emb instanceof List<?> vec2) {
+                                    double[] arr = new double[vec2.size()];
+                                    for (int i = 0; i < vec2.size(); i++) {
+                                        Object x = vec2.get(i);
+                                        arr[i] = x instanceof Number ? ((Number) x).doubleValue() : 0d;
+                                    }
+                                    return normalize(arr);
                                 }
-                                return normalize(arr);
                             }
                         }
+                        return null;
                     }
                     return null;
                 })
-                .onErrorResume(e -> Mono.empty());
+                .onErrorResume(e -> {
+                    log.warn("embedding调用失败: {}", e.getMessage());
+                    return Mono.empty();
+                });
     }
 
     private Mono<Void> ensureSchema() {
         if (schemaInitialized) return Mono.empty();
-        return ragVectorRepository.initializeSchema(embeddingProperties.getDimension())
+        return embed("init")
+                .map(v -> v.length)
+                .onErrorResume(e -> Mono.just(embeddingProperties.getDimension()))
+                .defaultIfEmpty(embeddingProperties.getDimension())
+                .flatMap(dim -> ragVectorRepository.initializeSchema(dim))
                 .doOnSuccess(v -> { schemaInitialized = true; dbAvailable = true; })
                 .doOnError(e -> { dbAvailable = false; schemaInitialized = true; log.warn("pgvector不可用，启用回退检索: {}", e.getMessage()); })
                 .onErrorResume(e -> Mono.empty());
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void initOnStartup() {
+        ensureSchema()
+                .then(ensureTemplateIndexed(library))
+                .subscribe();
     }
 
     /**

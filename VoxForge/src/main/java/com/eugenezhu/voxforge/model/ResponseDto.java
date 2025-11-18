@@ -28,6 +28,10 @@ public class ResponseDto {
     private String audioUrl; // 响应音频URL
     @Schema(description = "当前任务需要执行的命令", example = "start notepad.exe")
     private String cmd; // 当前任务需要执行的命令
+    @Schema(description = "命令执行环境", example = "cmd", allowableValues = {"cmd","powershell","bash"})
+    private String shell;
+    @Schema(description = "目标操作系统", example = "Windows 11")
+    private String os;
     @Schema(description = "任务链版本号", example = "0")
     private Integer chainVersion; // 任务链版本号(因为用户可能新增任务或修改任务)
     @Schema(description = "任务清单列表")
