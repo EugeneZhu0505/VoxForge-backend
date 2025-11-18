@@ -39,9 +39,13 @@ public class VoxForgeController {
 
         return voxForgeService.parseUserInput(request)
                 .map(ResponseEntity::ok)
-                .doOnSuccess(response -> log.info("处理用户输入完成: sessionId={}", request.getSessionId()))
-                .doOnError(error -> log.error("处理用户输入失败: sessionId={}, error={}", request.getSessionId(), error.getMessage()))
-                .onErrorReturn(ResponseEntity.badRequest().build());
+                .doOnSuccess(response -> {
+                    ResponseDto body = response.getBody();
+                    String sid = body != null ? body.getSessionId() : request.getSessionId();
+                    log.info("处理用户输入完成: sessionId={}", sid);
+                })
+                .doOnError(error -> log.error("处理用户输入失败: sessionId={}, errorType={}, errorMsg={}", request.getSessionId(), error.getClass().getSimpleName(), error.getMessage(), error))
+                .onErrorResume(error -> Mono.just(ResponseEntity.badRequest().body(buildErrorResponse(request.getSessionId(), error))));
     }
 
     @PostMapping("/upload")
@@ -64,9 +68,21 @@ public class VoxForgeController {
 
         return voxForgeService.handleTaskFeedback(request)
                 .map(ResponseEntity::ok)
-                .doOnSuccess(response -> log.info("处理任务反馈完成: sessionId={}", request.getSessionId()))
-                .doOnError(error -> log.error("处理任务反馈失败: sessionId={}, error={}", request.getSessionId(), error.getMessage()))
-                .onErrorReturn(ResponseEntity.badRequest().build());
+                .doOnSuccess(response -> {
+                    ResponseDto body = response.getBody();
+                    String sid = body != null ? body.getSessionId() : request.getSessionId();
+                    log.info("处理任务反馈完成: sessionId={}", sid);
+                })
+                .doOnError(error -> log.error("处理任务反馈失败: sessionId={}, errorType={}, errorMsg={}", request.getSessionId(), error.getClass().getSimpleName(), error.getMessage(), error))
+                .onErrorResume(error -> Mono.just(ResponseEntity.badRequest().body(buildErrorResponse(request.getSessionId(), error))));
+    }
+
+    private ResponseDto buildErrorResponse(String sessionId, Throwable error) {
+        ResponseDto dto = new ResponseDto();
+        dto.setSessionId(sessionId);
+        dto.setErrorMsg(error != null ? error.getMessage() : "未知错误");
+        dto.setText("请求处理失败");
+        return dto;
     }
 }
 

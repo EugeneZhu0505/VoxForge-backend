@@ -52,24 +52,24 @@ public class VoxForgeService {
                                     );
                         }
                 )
-                .doOnSuccess(response -> log.info("处理用户输入完成: sessionId={}", request.getSessionId()))
-                .doOnError(error -> log.error("处理用户输入失败: sessionId={}, error={}", request.getSessionId(), error.getMessage()));
+                .doOnSuccess(response -> log.info("处理用户输入完成: sessionId={}", response.getSessionId()))
+                .doOnError(error -> log.error("处理用户输入失败: sessionId={}, errorType={}, errorMsg={}", request.getSessionId(), error.getClass().getSimpleName(), error.getMessage(), error));
     }
 
     public Mono<ResponseDto> handleTaskFeedback(RequestDto request) {
-        log.info("收到任务反馈请求: sessionId={}, taskId={}, status={}", 
-                request.getSessionId(), 
+        log.info("收到任务反馈请求: sessionId={}, taskId={}, status={}",
+                request.getSessionId(),
                 request.getTaskFeedback() != null ? request.getTaskFeedback().getTaskId() : "null",
                 request.getTaskFeedback() != null ? request.getTaskFeedback().getStatus() : "null");
-        
+
         return getSession(request)
-                .doOnNext(session -> log.info("找到会话: sessionId={}, status={}, currentTaskId={}", 
+                .doOnNext(session -> log.info("找到会话: sessionId={}, status={}, currentTaskId={}",
                         session.getId(), session.getStatus(), session.getCurrentTaskId()))
                 .flatMap(session -> taskChainService.executeTask(session, request.getTaskFeedback()))
-                .doOnSuccess(response -> log.info("处理任务反馈完成: sessionId={}, responseText={}", 
+                .doOnSuccess(response -> log.info("处理任务反馈完成: sessionId={}, responseText={}",
                         response.getSessionId(), response.getText()))
-                .doOnError(error -> log.error("处理任务反馈失败: sessionId={}, error={}", 
-                        request.getSessionId(), error.getMessage(), error));
+                .doOnError(error -> log.error("处理任务反馈失败: sessionId={}, errorType={}, errorMsg={}",
+                        request.getSessionId(), error.getClass().getSimpleName(), error.getMessage(), error));
     }
 
     public Mono<String> uploadFile(Mono<FilePart> filePart) {

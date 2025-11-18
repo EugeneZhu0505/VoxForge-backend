@@ -36,6 +36,7 @@ public class RagService {
 
     private final RagVectorRepository ragVectorRepository;
     private volatile boolean schemaInitialized = false;
+    private volatile boolean dbAvailable = true;
 
     /**
      * 命令库
@@ -71,13 +72,11 @@ public class RagService {
         return ensureSchema()
                 .then(ensureTemplateIndexed(candidates))
                 .then(
-                        embed(text).defaultIfEmpty(null)
-                                .flatMap(q -> {
-                                    if (q == null) {
-                                        return Mono.just(fallbackTfRetrieve(text, candidates, k));
-                                    }
-                                    return ragVectorRepository.search(os, q, k).collectList();
-                                })
+                        dbAvailable
+                                ? embed(text)
+                                .flatMap(q -> ragVectorRepository.search(os, q, k).collectList())
+                                .switchIfEmpty(Mono.just(fallbackTfRetrieve(text, candidates, k)))
+                                : Mono.just(fallbackTfRetrieve(text, candidates, k))
                 );
 
     }
@@ -87,6 +86,7 @@ public class RagService {
      * @param candidates 命令模板列表
      */
     private Mono<Void> ensureTemplateIndexed(List<CommandTemplate> candidates) {
+        if (!dbAvailable) return Mono.empty();
         return Flux.fromIterable(candidates)
                 .flatMap(t -> ragVectorRepository.exists(t.getCmd(), t.getOs(), t.getShell())
                         .flatMap(exists -> exists
@@ -139,7 +139,9 @@ public class RagService {
     private Mono<Void> ensureSchema() {
         if (schemaInitialized) return Mono.empty();
         return ragVectorRepository.initializeSchema(embeddingProperties.getDimension())
-                .doOnSuccess(v -> schemaInitialized = true);
+                .doOnSuccess(v -> { schemaInitialized = true; dbAvailable = true; })
+                .doOnError(e -> { dbAvailable = false; schemaInitialized = true; log.warn("pgvector不可用，启用回退检索: {}", e.getMessage()); })
+                .onErrorResume(e -> Mono.empty());
     }
 
     /**

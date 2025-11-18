@@ -83,18 +83,18 @@ public class TaskChainService {
                                                                                 updatedTask ->
                                                                                         //ttsService.generateTaskResponse(updatedTask.getTitle())
                                                                                         //        .map(audioUrl -> buildInitialResponse(llmResponse, savedTaskChain, savedTasks, audioUrl))
-                                                                                taskChainRepository.findById(savedTaskChain.getId())
-                                                                                        .flatMap(
-                                                                                                chain -> {
-                                                                                                    chain.setStatus(taskStateMachine.next(chain.getStatus(), "START"));
-                                                                                                    chain.setUpdatedAt(LocalDateTime.now());
-                                                                                                    return taskChainRepository.save(chain);
-                                                                                                }
-                                                                                        )
-                                                                                        .then(
-                                                                                                ttsService.generateTaskResponse(updatedTask.getTitle())
-                                                                                                        .map(audioUrl -> buildInitialResponse(llmResponse, savedTaskChain, savedTasks, audioUrl))
-                                                                                        )
+                                                                                        taskChainRepository.findById(savedTaskChain.getId())
+                                                                                                .flatMap(
+                                                                                                        chain -> {
+                                                                                                            chain.setStatus(taskStateMachine.next(chain.getStatus(), "START"));
+                                                                                                            chain.setUpdatedAt(LocalDateTime.now());
+                                                                                                            return taskChainRepository.save(chain);
+                                                                                                        }
+                                                                                                )
+                                                                                                .then(
+                                                                                                        ttsService.generateTaskResponse(updatedTask.getTitle())
+                                                                                                                .map(audioUrl -> buildInitialResponse(llmResponse, savedTaskChain, savedTasks, audioUrl))
+                                                                                                )
                                                                         );
                                                             } else {
                                                                 // 没有任务返回空响应
@@ -123,9 +123,9 @@ public class TaskChainService {
      * @return
      */
     public Mono<ResponseDto> executeTask(Session session, RequestDto.TaskFeedback taskFeedback) {
-        log.info("开始执行任务，用户ID: {}, 会话ID: {}, 任务ID: {}", session.getUserId(), session.getId(), 
+        log.info("开始执行任务，用户ID: {}, 会话ID: {}, 任务ID: {}", session.getUserId(), session.getId(),
                 taskFeedback != null ? taskFeedback.getTaskId() : "null");
-        
+
         return applyFeedback(session, taskFeedback)
                 .flatMap(
                         updatedSession -> sessionRepository.save(updatedSession)
@@ -204,17 +204,17 @@ public class TaskChainService {
                     return Mono.just(errorResponse);
                 })
                 .switchIfEmpty(
-                    // 如果整个流程返回空，创建一个默认响应并调用TTS
-                    ttsService.textToSpeech("任务处理完成")
-                        .onErrorReturn("") // 如果TTS失败，返回空字符串
-                        .map(audioUrl -> {
-                            log.warn("executeTask返回空响应，创建默认响应");
-                            ResponseDto defaultResponse = new ResponseDto();
-                            defaultResponse.setSessionId(session.getId().toString());
-                            defaultResponse.setText("任务处理完成");
-                            defaultResponse.setAudioUrl(audioUrl);
-                            return defaultResponse;
-                        })
+                        // 如果整个流程返回空，创建一个默认响应并调用TTS
+                        ttsService.textToSpeech("任务处理完成")
+                                .onErrorReturn("") // 如果TTS失败，返回空字符串
+                                .map(audioUrl -> {
+                                    log.warn("executeTask返回空响应，创建默认响应");
+                                    ResponseDto defaultResponse = new ResponseDto();
+                                    defaultResponse.setSessionId(session.getId().toString());
+                                    defaultResponse.setText("任务处理完成");
+                                    defaultResponse.setAudioUrl(audioUrl);
+                                    return defaultResponse;
+                                })
                 );
     }
 
@@ -388,8 +388,12 @@ public class TaskChainService {
     }
 
     private List<TaskItem> createTaskItems(List<LlmResponse.TaskDefinition> taskDefinitions, Long taskChainId, Long userId, Long sessionId) {
-        AtomicInteger stepOrder = new AtomicInteger(0); // 任务链中的步骤顺序
+        AtomicInteger stepOrder = new AtomicInteger(0);
         List<TaskItem> tasks = new ArrayList<>();
+
+        if (taskDefinitions == null || taskDefinitions.isEmpty()) {
+            return tasks;
+        }
 
         for (LlmResponse.TaskDefinition taskDef : taskDefinitions) {
             TaskItem taskItem = new TaskItem();

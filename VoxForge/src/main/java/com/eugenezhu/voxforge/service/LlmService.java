@@ -97,7 +97,8 @@ public class LlmService {
                             )
                             .doOnSuccess(response -> {
                                 llmCircuitBreaker.onSuccess(System.nanoTime() - startTime, TimeUnit.NANOSECONDS);
-                                log.info("成功解析用户输入, 生成 {} 个任务", response.getTasks().size());
+                                int taskCount = response.getTasks() != null ? response.getTasks().size() : 0;
+                                log.info("成功解析用户输入, 生成 {} 个任务", taskCount);
                             })
                             .doOnError(error -> {
                                 llmCircuitBreaker.onError(System.nanoTime() - startTime, TimeUnit.NANOSECONDS, error);
