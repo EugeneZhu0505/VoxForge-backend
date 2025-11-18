@@ -57,6 +57,7 @@ public class DatabaseConfig extends AbstractR2dbcConfiguration {
         return new R2dbcTransactionManager(connectionFactory);
     }
 
+
     @Override
     @Bean
     public R2dbcCustomConversions r2dbcCustomConversions() {

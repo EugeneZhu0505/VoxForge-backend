@@ -24,6 +24,20 @@ public class AiConfig {
     @Value("${external.llm.timeout}")
     private String timeout;
 
+    @Value("${external.embedding.api-key}")
+    private String embeddingApiKey;
+    @Value("${external.embedding.model}")
+    private String embeddingModel;
+    @Value("${external.embedding.timeout}")
+    private String embeddingTimeout;
+    @Value("${external.embedding.dimension}")
+    private int embeddingDimension;
+
+    @Bean
+    public EmbeddingProperties embeddingProperties() {
+        return new EmbeddingProperties(embeddingApiKey, embeddingModel, embeddingTimeout, embeddingDimension);
+    }
+
     @Bean
     public LlmProperties llmProperties() {
         return new LlmProperties(apiKey, model, timeout);
@@ -36,6 +50,16 @@ public class AiConfig {
         private String apiKey;
         private String model;
         private String timeout;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class EmbeddingProperties {
+        private String apiKey;
+        private String model;
+        private String timeout;
+        private Integer dimension;
     }
 }
 

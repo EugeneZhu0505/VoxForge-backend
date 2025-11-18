@@ -1,6 +1,7 @@
 package com.eugenezhu.voxforge.service;
 
 import com.eugenezhu.voxforge.config.AiConfig;
+import com.eugenezhu.voxforge.repository.RagVectorRepository;
 import com.eugenezhu.voxforge.model.CommandTemplate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,12 +29,13 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class RagService {
 
-    @Qualifier("llmWebClient")
-    private final WebClient llmWebClient;
+    @Qualifier("embeddingWebClient")
+    private final WebClient embeddingWebClient;
 
-    private final AiConfig.LlmProperties llmProperties;
+    private final AiConfig.EmbeddingProperties embeddingProperties;
 
-    private final Map<CommandTemplate, double[]> vectors = new ConcurrentHashMap<>();
+    private final RagVectorRepository ragVectorRepository;
+    private volatile boolean schemaInitialized = false;
 
     /**
      * 命令库
@@ -66,20 +68,16 @@ public class RagService {
                 .filter(cmd -> cmd.getOs().equals(os))
                 .toList();
 
-        return ensureTemplateVectors(candidates)
+        return ensureSchema()
+                .then(ensureTemplateIndexed(candidates))
                 .then(
                         embed(text).defaultIfEmpty(null)
-                                .map(
-                                        q -> {
-                                            if (q == null) return fallbackTfRetrieve(text, candidates, k);
-                                            return candidates.stream()
-                                                    .map(t -> Map.entry(t, cosine(q, vectors.get(t))))
-                                                    .sorted((a, b) -> Double.compare(b.getValue(), a.getValue()))
-                                                    .limit(k)
-                                                    .map(Map.Entry::getKey)
-                                                    .toList();
-                                        }
-                                )
+                                .flatMap(q -> {
+                                    if (q == null) {
+                                        return Mono.just(fallbackTfRetrieve(text, candidates, k));
+                                    }
+                                    return ragVectorRepository.search(os, q, k).collectList();
+                                })
                 );
 
     }
@@ -88,14 +86,15 @@ public class RagService {
      * 确保命令模板的向量存在
      * @param candidates 命令模板列表
      */
-    private Mono<Void> ensureTemplateVectors(List<CommandTemplate> candidates) {
-        List<CommandTemplate> missing = candidates.stream().filter(t -> !vectors.containsKey(t)).toList();
-        if (missing.isEmpty()) return Mono.empty();
-        return Flux.fromIterable(missing)
-                .flatMap(
-                        t -> embed(t.getCmd() + " " + t.getDesc())
+    private Mono<Void> ensureTemplateIndexed(List<CommandTemplate> candidates) {
+        return Flux.fromIterable(candidates)
+                .flatMap(t -> ragVectorRepository.exists(t.getCmd(), t.getOs(), t.getShell())
+                        .flatMap(exists -> exists
+                                ? Mono.empty()
+                                : embed(t.getCmd() + " " + t.getDesc())
                                 .filter(v -> v != null)
-                                .doOnNext(v -> vectors.put(t, v))
+                                .flatMap(v -> ragVectorRepository.upsert(t, v))
+                        )
                 )
                 .then();
     }
@@ -108,10 +107,10 @@ public class RagService {
     private Mono<double[]> embed(String text) {
         Map<String, Object> body = new HashMap<>();
         body.put("input", text);
-        body.put("model", llmProperties.getModel());
-        return llmWebClient.post()
+        body.put("model", embeddingProperties.getModel());
+        return embeddingWebClient.post()
                 .uri("/embeddings")
-                .header("Authorization", "Bearer " + llmProperties.getApiKey())
+                .header("Authorization", "Bearer " + embeddingProperties.getApiKey())
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(BodyInserters.fromValue(body))
                 .retrieve()
@@ -135,6 +134,12 @@ public class RagService {
                     return null;
                 })
                 .onErrorResume(e -> Mono.empty());
+    }
+
+    private Mono<Void> ensureSchema() {
+        if (schemaInitialized) return Mono.empty();
+        return ragVectorRepository.initializeSchema(embeddingProperties.getDimension())
+                .doOnSuccess(v -> schemaInitialized = true);
     }
 
     /**

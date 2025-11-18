@@ -59,6 +59,13 @@ public class WebClientConfig {
                 .build();
     }
 
+    @Bean("embeddingWebClient")
+    public WebClient embeddingWebClient(@Value("${external.embedding.api-url}") String embeddingUrl) {
+        return webClient().mutate()
+                .baseUrl(embeddingUrl)
+                .build();
+    }
+
     @Bean("asrWebClient")
     public WebClient asrWebClient(@Value("${external.asr.api-url}") String asrUrl) {
         return webClient().mutate() // 基于默认 WebClient 配置创建新实例
